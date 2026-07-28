@@ -102,7 +102,7 @@ TradeDate    = 2026-07-24
 | 欄位 | 建議型別 | 說明 |
 |---|---|---|
 | `TradeDate` | Date | 此 snapshot 可使用的交易日 |
-| `ThemeId` | String | 跨日穩定的族群 ID |
+| `ThemeId` | UInt32 | 跨日穩定的族群 ID，對應 `dim_themes` |
 
 共同規則：
 
@@ -111,6 +111,22 @@ TradeDate    = 2026-07-24
 - 同一版本的 snapshot 不可被覆寫；
 - 所有數值欄位必須區分 `0` 與 `null`；
 - `0` 表示已觀察且數值為零，`null` 表示無法計算或來源缺失。
+
+### 4.1 族群維度表
+
+`ThemeId` 不使用 Label 字串，而使用不重複配置的 `UInt32`。名稱與 aliases
+分別由下列維度表管理：
+
+```text
+dim_themes
+    ThemeId, ThemeKey, ThemeLabel, Description, Status, CreatedDate
+
+dim_theme_aliases
+    ThemeId, Alias, NormalizedAlias, AliasType, EffectiveFrom
+```
+
+`ThemeLabel` 可以改名，但既有 `ThemeId` 不可改號或重複配給其他族群。
+新增 alias 必須記錄生效日期，歷史 snapshot 不得使用當時尚未生效的 alias。
 
 ---
 
@@ -139,15 +155,22 @@ TradeDate, ThemeId, SnapshotVersion
 
 | 欄位 | 建議型別 | 必要性 | 說明 |
 |---|---|---:|---|
-| `ThemeId` | String | 必要 | 跨日穩定的族群 ID |
+| `ThemeId` | UInt32 | 必要 | 跨日穩定的族群 ID |
 | `ThemeLabel` | String | 必要 | 顯示名稱，例如 CPO、AI 散熱 |
+| `HasNewsToday` | Boolean | 必要 | 今天是否有至少一篇族群新聞 |
+| `IsActiveToday` | Boolean | 必要 | 今天是否重新通過族群最低品質門檻 |
 | `SourceCount` | UInt32 | 必要 | 當日新聞總數 |
 | `ThemeCount` | UInt32 | 必要 | 來源中站多少 |
-| `ThemeStatus` | String | 必要 | `NEW`、`CONTINUING`、`REVIVED`、`SPLIT`、`MERGED` |
+| `ArticleCount` | UInt32 | 必要 | 當日提及該族群的文章數，未做故事去重 |
+| `TitleMentionCount` | UInt32 | 必要 | 當日標題提及該族群的去重故事數 |
+| `CountInSeason` | UInt32 | 必要 | 最近 60 個日曆日中有族群新聞的天數 |
+| `ConsecutiveNewsDays` | UInt32 | 必要 | 截至今天連續有新聞的日數；今天無新聞為 0 |
+| `LastNewsDate` | Date | 必要 | 最近一次族群新聞日期 |
+| `DaysSinceLastNews` | UInt32 | 必要 | 距最近新聞的日曆日數 |
+| `ThemeStatus` | String | 必要 | `NEW`、`CONTINUING`、`REVIVED`、`IN_SEASON` |
 | `FirstSeenDate` | Date | 必要 | 首次被辨識的日期 |
 | `InactiveDaysBeforeToday` | UInt32 | 必要 | 本次活化前沉寂日數 |
 | `ActiveStreakDays` | UInt32 | 必要 | 連續活躍日數 |
-| `TitleMentionCount` | UInt32 | 必要 | 在標題中被識別的數量 |
 | `FirstMentionCount` | UInt32 | 必要 | 在內文中第一個提及的數量 |
 
 可嘗試項目 
@@ -203,14 +226,16 @@ TradeDate, ThemeId, QuoteCode, SnapshotVersion
 
 | 欄位 | 建議型別 | 必要性 | 說明 |
 |---|---|---:|---|
-| `ThemeId` | String | 必要 | 跨日穩定的族群 ID |
+| `ThemeId` | UInt32 | 必要 | 跨日穩定的族群 ID |
 | `ThemeLabel` | String | 必要 | 顯示名稱，例如 CPO、AI 散熱 |
 | `QuoteCode` | String | 必要 | 股票代碼 |
 | `MentionCount` | UInt32 | 必要 | 原始提及次數(同一篇文章可算多次) |
 | `UniqueStoryCount` | UInt32 | 必要 | 出現於多少篇去重故事 |
 | `TitleMentionCount` | UInt32 | 必要 | 標題提及故事數 |
-| `FirstMemberDate` | Boolean | 必要 | 首次被歸入該族群 |
+| `FirstMemberDate` | Date | 必要 | 首次被歸入該族群 |
 | `MemberStreakDays` | UInt32 | 必要 | 連續屬於該族群的日數 |
+| `MemberSnapshotDate` | Date | 必要 | 本列商品集合最近一次正式登記日期 |
+| `IsCarriedForward` | Boolean | 必要 | 是否從最近登記日沿用，而非今天重新確認 |
 
 ### 6.4 範例
 
@@ -266,9 +291,9 @@ SnapshotVersion
 
 | 欄位 | 建議型別 | 必要性 | 說明 |
 |---|---|---:|---|
-| `ThemeId` | String | 必要 | 關係來源族群(標題帶有族群) |
+| `ThemeId` | UInt32 | 必要 | 關係來源族群(標題帶有族群) |
 | `ThemeLabel` | String | 必要 | 族群名稱 |
-| `TargetThemeId` | String | 其他當日族群 |
+| `TargetThemeId` | UInt32 | 其他當日族群 |
 | `TargetConnection` | int | 從標題可連到其他族群 |
 
 
