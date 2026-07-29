@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from news_collector.analysis.theme_engine import (
+    CATALOG_VERSION,
     build_point_in_time_themes,
     preserve_existing_theme_ids,
 )
@@ -68,9 +69,7 @@ def test_theme_can_pass_without_title_mention_and_keeps_count_features() -> None
         stocks=stocks,
         analysis_dates=[day],
         trade_dates={day: date(2026, 7, 27)},
-        as_of_by_date={
-            day: datetime(day.year, day.month, day.day, 23, 59, tzinfo=TAIPEI)
-        },
+        as_of_by_date={day: datetime(day.year, day.month, day.day, 23, 59, tzinfo=TAIPEI)},
     )
 
     assert len(result.daily_themes) == 1
@@ -89,7 +88,13 @@ def test_theme_can_pass_without_title_mention_and_keeps_count_features() -> None
     theme_key = result.theme_catalog[-1]["theme_key"]
     preserved = preserve_existing_theme_ids(
         result,
-        [{"theme_key": theme_key, "theme_id": 20_000}],
+        [
+            {
+                "theme_key": theme_key,
+                "theme_id": 20_000,
+                "catalog_version": CATALOG_VERSION,
+            }
+        ],
     )
     assert preserved.daily_themes[0]["theme_id"] == 20_000
     assert preserved.theme_catalog[-1]["theme_id"] == 20_000
@@ -166,9 +171,7 @@ def test_theme_stays_in_sixty_day_universe_and_carries_latest_members() -> None:
     assert third["consecutive_news_days"] == 0
     assert third["days_since_last_news"] == 1
 
-    third_members = [
-        row for row in result.daily_members if row["evidence_date"] == third_day
-    ]
+    third_members = [row for row in result.daily_members if row["evidence_date"] == third_day]
     assert len(third_members) == 3
     assert {row["member_snapshot_date"] for row in third_members} == {first_day}
     assert all(row["is_carried_forward"] for row in third_members)
@@ -202,9 +205,7 @@ def test_known_theme_title_alias_is_counted_without_source_keyword() -> None:
         stocks=stocks,
         analysis_dates=[day],
         trade_dates={day: day + timedelta(days=1)},
-        as_of_by_date={
-            day: datetime(day.year, day.month, day.day, 23, 59, tzinfo=TAIPEI)
-        },
+        as_of_by_date={day: datetime(day.year, day.month, day.day, 23, 59, tzinfo=TAIPEI)},
     )
 
     assert len(result.daily_themes) == 1
@@ -247,9 +248,7 @@ def test_reviewed_non_group_label_is_excluded_without_removing_raw_input() -> No
         stocks=stocks,
         analysis_dates=[day],
         trade_dates={day: day + timedelta(days=1)},
-        as_of_by_date={
-            day: datetime(day.year, day.month, day.day, 23, 59, tzinfo=TAIPEI)
-        },
+        as_of_by_date={day: datetime(day.year, day.month, day.day, 23, 59, tzinfo=TAIPEI)},
     )
 
     assert keywords

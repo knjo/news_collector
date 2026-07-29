@@ -14,6 +14,15 @@ from typing import Any
 import httpx
 import polars as pl
 
+from news_collector.analysis.broad_themes import (
+    BROAD_DAILY_SCHEMA,
+    BROAD_RULE_VERSION,
+    BROAD_SNAPSHOT_VERSION,
+    BROAD_THEMES,
+    SUBTHEMES,
+    broad_theme_definitions,
+    build_broad_daily_members,
+)
 from news_collector.analysis.theme_engine import (
     ARTICLE_THEME_SCHEMA,
     CATALOG_VERSION,
@@ -106,6 +115,40 @@ def _write_json(path: Path, value: Any) -> None:
         encoding="utf-8",
     )
     temporary.replace(path)
+
+
+def _write_broad_universe_parquet(
+    *,
+    output_root: Path,
+    completed_end_date: date,
+) -> tuple[Path, int, date | None]:
+    """Publish one compact Parquet file from all completed broad daily partitions."""
+    source_pattern = str(
+        output_root / "broad_daily" / "evidence_date=*" / "daily_broad_theme_members.parquet"
+    )
+    frame = (
+        pl.scan_parquet(source_pattern)
+        .filter(pl.col("evidence_date") <= completed_end_date)
+        .sort(
+            ["evidence_date", "theme_id", "membership_score", "quote_code"],
+            descending=[False, False, True, False],
+        )
+        .collect()
+    )
+    output_path = output_root / "theme_universe.parquet"
+    temporary = output_path.with_name(f".{output_path.name}.tmp-{uuid.uuid4().hex}")
+    frame.write_parquet(
+        temporary,
+        compression="zstd",
+        compression_level=9,
+        statistics=True,
+    )
+    temporary.replace(output_path)
+    legacy_csv = output_root / "theme_universe.csv"
+    if legacy_csv.exists():
+        legacy_csv.unlink()
+    first_date = frame.select(pl.col("evidence_date").min()).item() if frame.height else None
+    return output_path, frame.height, first_date
 
 
 def _partition_records(
@@ -460,6 +503,13 @@ def run_backfill(
         )
         if existing_catalog:
             result = preserve_existing_theme_ids(result, existing_catalog)
+        broad_daily_rows = build_broad_daily_members(
+            article_themes=result.article_themes,
+            evidence=result.evidence,
+            theme_catalog=result.theme_catalog,
+            analysis_dates=analysis_dates,
+            trade_dates=trade_dates,
+        )
 
         article_dates = {row["article_id"]: row["published_date"] for row in articles}
         normalized_partitions: dict[str, dict[date, list[dict[str, Any]]]] = {
@@ -509,6 +559,10 @@ def run_backfill(
             "daily_theme_members.parquet": DAILY_MEMBER_SCHEMA,
             "daily_theme_relations.parquet": DAILY_RELATION_SCHEMA,
         }
+        broad_daily_partitions = _partition_records(
+            broad_daily_rows,
+            "evidence_date",
+        )
 
         for day in analysis_dates:
             normalized_day = staging_root / "normalized" / f"published_date={day.isoformat()}"
@@ -526,6 +580,12 @@ def run_backfill(
                     partitions.get(day, []),
                     daily_schemas[filename],
                 )
+            broad_daily_day = staging_root / "broad_daily" / f"evidence_date={day.isoformat()}"
+            _write_parquet(
+                broad_daily_day / "daily_broad_theme_members.parquet",
+                broad_daily_partitions.get(day, []),
+                BROAD_DAILY_SCHEMA,
+            )
 
         reference_dir = staging_root / "reference"
         _write_parquet(
@@ -570,6 +630,13 @@ def run_backfill(
             for row in result.daily_relations
             if output_start <= row["evidence_date"] <= period_end.date()
         ]
+        output_broad_rows = [
+            row
+            for row in broad_daily_rows
+            if output_start <= row["evidence_date"] <= period_end.date()
+        ]
+        broad_definitions = broad_theme_definitions(result.theme_catalog)
+        broad_parent_count = sum(theme.parent_theme_id is None for theme in broad_definitions)
         article_type_counts: dict[str, int] = defaultdict(int)
         for article in articles:
             article_type_counts[article["article_type"]] += 1
@@ -578,6 +645,8 @@ def run_backfill(
             "rule_version": RULE_VERSION,
             "catalog_version": CATALOG_VERSION,
             "taxonomy_version": TAXONOMY_VERSION,
+            "broad_rule_version": BROAD_RULE_VERSION,
+            "broad_snapshot_version": BROAD_SNAPSHOT_VERSION,
             "source": "cnyes",
             "category": "tw_stock_news",
             "analysis_start_date": analysis_start_date.isoformat(),
@@ -603,6 +672,11 @@ def run_backfill(
             "daily_theme_row_count": len(output_theme_rows),
             "daily_member_row_count": len(output_member_rows),
             "daily_relation_row_count": len(output_relation_rows),
+            "broad_theme_count": broad_parent_count,
+            "broad_fixed_parent_count": len(BROAD_THEMES),
+            "broad_dynamic_parent_count": broad_parent_count - len(BROAD_THEMES),
+            "broad_subtheme_count": len(SUBTHEMES),
+            "broad_daily_row_count": len(output_broad_rows),
             "article_type_counts": dict(article_type_counts),
             "report_date": report_date.isoformat(),
         }
@@ -623,8 +697,31 @@ def run_backfill(
                 staging_root / "daily" / f"evidence_date={day.isoformat()}",
                 output_root / "daily" / f"evidence_date={day.isoformat()}",
             )
+            _replace_directory(
+                staging_root / "broad_daily" / f"evidence_date={day.isoformat()}",
+                output_root / "broad_daily" / f"evidence_date={day.isoformat()}",
+            )
         _replace_directory(reference_dir, output_root / "reference")
 
+        completed_end_date = (
+            period_end.date() if end_date is not None else fetched_at.date() - timedelta(days=1)
+        )
+        universe_path, universe_row_count, universe_start_date = _write_broad_universe_parquet(
+            output_root=output_root,
+            completed_end_date=completed_end_date,
+        )
+        manifest.update(
+            {
+                "theme_universe_file": str(universe_path.relative_to(data_dir)),
+                "theme_universe_start_date": (
+                    universe_start_date.isoformat() if universe_start_date else None
+                ),
+                "theme_universe_end_date": completed_end_date.isoformat(),
+                "theme_universe_row_count": universe_row_count,
+                "theme_universe_format": "parquet",
+                "theme_universe_compression": "zstd",
+            }
+        )
         _write_json(output_root / "manifest.json", manifest)
         _write_json(output_root / "report.json", report)
         _write_json(output_root / "period_report.json", period_report)

@@ -60,11 +60,15 @@ data/cnyes/
 │       ├── daily_themes.parquet
 │       ├── daily_theme_members.parquet
 │       └── daily_theme_relations.parquet
+├── broad_daily/
+│   └── evidence_date=YYYY-MM-DD/
+│       └── daily_broad_theme_members.parquet
 ├── reference/
 │   ├── dim_themes.parquet
 │   ├── dim_theme_aliases.parquet
 │   ├── twse_holiday_schedule.json
 │   └── data_leak_audit.json
+├── theme_universe.parquet
 ├── manifest.json
 ├── report.json
 ├── period_report.json
@@ -81,6 +85,40 @@ data/cnyes/
   正式登記日。`member_snapshot_date` 及 `is_carried_forward` 可辨識是否沿用舊
   商品集合。
 - `daily_theme_relations`：同日族群間的去重故事共現與合格商品重疊。
+
+另外提供較容易直接使用的廣義寬表
+`broad_daily/evidence_date=YYYY-MM-DD/daily_broad_theme_members.parquet`。
+每列是一個「資料日期 × 廣義題材 × 商品」，將題材狀態與滾動商品名單合併：
+
+```text
+evidence_date
+trade_date
+theme_id
+theme_name
+news_days_60d
+is_new_theme
+days_since_last_news
+member_count_change
+quote_code
+stock_name
+membership_score
+is_new_member
+```
+
+廣義題材只合併產品文字，例如
+`PCB/CCL/玻纖布/軟板/載板 -> PCB`，不內建股票成分表。
+18 個既有廣義父族群是文字合併規則，不是題材數量上限。新聞演算法辨識出的
+其他正式題材若未被合併，會直接成為新的獨立父族群，例如電動車、生技、儲能。
+某個子題材依截至當日的滾動新聞證據累積出至少 5 檔合格商品
+時，會另外拆成獨立 `theme_id`，例如 `PCB -> CCL / 玻纖布 / 載板`。
+商品必須依截至當日的歷史新聞證據通過滾動門檻後才會加入，因此不會使用
+`theme_universe_2026_hindsight.csv` 回填歷史。規則詳見
+[`Broad_theme_algorithm_zh.md`](Broad_theme_algorithm_zh.md)。
+
+`data/cnyes/theme_universe.parquet` 是所有完整日期的合併寬表，使用 Zstandard
+壓縮。
+一般每天抓到目前時間時不會把尚未結束的今天放入此檔；使用
+`--end-date` 重播歷史資料時，指定的結束日視為完整日。
 
 `ThemeId` 是無語意的連續 `UInt32`；seed 與自動題材共用流水號，來源另由
 `origin_type` 區分。名稱及 aliases 由 `reference` 內兩張維度表對應。
